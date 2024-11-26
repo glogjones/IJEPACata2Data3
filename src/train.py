@@ -49,6 +49,9 @@ from src.helper import (
     init_opt)
 from src.transforms import make_transforms
 
+# Import the new data loader
+from src.datasets.make_fits_cutout_dataset import make_fits_cutout_dataset
+
 # --
 log_timings = True
 log_freq = 10
@@ -89,6 +92,9 @@ def main(args, resume_preempt=False):
     use_horizontal_flip = args['data']['use_horizontal_flip']
     use_color_distortion = args['data']['use_color_distortion']
     color_jitter = args['data']['color_jitter_strength']
+    cutout_size = args['data']['cutout_size']
+    image_path = args['data']['image_path']
+    catalogue_path = args['data']['catalogue_path']
     # --
     batch_size = args['data']['batch_size']
     pin_mem = args['data']['pin_mem']
@@ -189,19 +195,20 @@ def main(args, resume_preempt=False):
         color_jitter=color_jitter)
 
     # -- init data-loaders/samplers
-    _, unsupervised_loader, unsupervised_sampler = make_imagenet1k(
-            transform=transform,
-            batch_size=batch_size,
-            collator=mask_collator,
-            pin_mem=pin_mem,
-            training=True,
-            num_workers=num_workers,
-            world_size=world_size,
-            rank=rank,
-            root_path=root_path,
-            image_folder=image_folder,
-            copy_data=copy_data,
-            drop_last=True)
+    _, unsupervised_loader, unsupervised_sampler = make_fits_cutout_dataset(
+        transform=transform,
+        batch_size=batch_size,
+        collator=mask_collator,
+        pin_mem=pin_mem,
+        num_workers=num_workers,
+        world_size=world_size,
+        rank=rank,
+        cutout_size=cutout_size,
+        shuffle=True,
+        drop_last=True,
+        catalogue_path=catalogue_path,
+        image_path=image_path
+    )
     ipe = len(unsupervised_loader)
 
     # -- init optimizer and scheduler
