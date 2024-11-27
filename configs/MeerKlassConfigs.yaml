@@ -4,10 +4,11 @@ data:
   crop_scale: (0.3,1.0)
   crop_size: 64
   cutout_size: 224
-  image_path: '/content/drive/MyDrive/im_18k4as.deeper.DI.int.restored.fits'  # Add this line
+  fits_file_path: '/content/drive/MyDrive/im_18k4as.deeper.DI.int.restored.fits'  # Add this line
   catalogue_path: '/content/drive/MyDrive/ijepa_logs/catalogue.txt'  # Add this line
   image_folder: tiny-imagenet-200/
   num_workers: 10
+  num_cutouts: 10000
   pin_mem: true
   root_path: /content/ijepa/data/tiny-imagenet/
   use_color_distortion: false
