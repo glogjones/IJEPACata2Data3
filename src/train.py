@@ -50,7 +50,7 @@ from src.helper import (
 from src.transforms import make_transforms
 
 # Import the new data loader
-from src.datasets.make_fits_cutout_dataset import make_fits_cutout_dataset
+from src.datasets.make_fits_cutout_dataset import make_cata2data
 
 # --
 log_timings = True
@@ -93,8 +93,9 @@ def main(args, resume_preempt=False):
     use_color_distortion = args['data']['use_color_distortion']
     color_jitter = args['data']['color_jitter_strength']
     cutout_size = args['data']['cutout_size']
-    image_path = args['data']['image_path']
     catalogue_path = args['data']['catalogue_path']
+    num_cutouts = args['data']['num_cutouts']
+    fits_file_path = args['data']['fits_file_path']
     # --
     batch_size = args['data']['batch_size']
     pin_mem = args['data']['pin_mem']
@@ -195,7 +196,7 @@ def main(args, resume_preempt=False):
         color_jitter=color_jitter)
 
     # -- init data-loaders/samplers
-    _, unsupervised_loader, unsupervised_sampler = make_fits_cutout_dataset(
+    _, unsupervised_loader, unsupervised_sampler = make_cata2data(
         transform=transform,
         batch_size=batch_size,
         collator=mask_collator,
@@ -204,10 +205,9 @@ def main(args, resume_preempt=False):
         world_size=world_size,
         rank=rank,
         cutout_size=cutout_size,
-        shuffle=True,
         drop_last=True,
         catalogue_path=catalogue_path,
-        image_path=image_path
+        fits_file_path=fits_file_path
     )
     ipe = len(unsupervised_loader)
 
@@ -384,3 +384,4 @@ def main(args, resume_preempt=False):
 
 if __name__ == "__main__":
     main()
+
