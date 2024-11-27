@@ -1,134 +1,159 @@
-# Step 1: Import Libraries
 import os
-import pandas as pd
+import logging
 import numpy as np
+import pandas as pd
+import torch
+from torch.utils.data import Dataset, DataLoader, distributed
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from cata2data import CataData
-from logging import getLogger
-import torch
-from torch.utils.data import DataLoader, distributed
 
-logger = getLogger()
+logger = logging.getLogger(__name__)
 
-# Step 2: Define Paths and Constants
-image_path = '/content/drive/MyDrive/im_18k4as.deeper.DI.int.restored.fits'
-catalogue_path = '/content/drive/MyDrive/ijepa_logs/catalogue_cutouts.txt'
-num_cutouts = 10000  # Number of cutouts
-cutout_shape = 224  # Shape of each cutout in pixels
-batch_size = 64  # Batch size for DataLoader
-num_workers = 8  # Number of workers for DataLoader
+def make_cata2data(
+    batch_size=128,
+    pin_mem=True,
+    num_workers=8,
+    world_size=1,
+    rank=0,
+    fits_file_path=None,
+    catalogue_path=None,
+    num_cutouts=10000,
+    cutout_size=224,
+    transform=None,
+    collator=None,
+    drop_last=True,
+):
+    """
+    Creates a DataLoader for random cutouts from a .fits file using CataData.
 
-# Step 3: Open the FITS File and Determine RA/DEC Range
-logger.info("Opening FITS file and extracting RA/DEC range.")
-with fits.open(image_path) as hdul:
-    wcs = WCS(hdul[0].header, naxis=2)
-    image_shape = hdul[0].data.shape[-2:]  # Height and width of the image
+    Args:
+        batch_size: Number of samples per batch.
+        pin_mem: Whether to pin memory for faster data transfer to GPU.
+        num_workers: Number of worker threads for DataLoader.
+        world_size: Total number of processes for distributed training.
+        rank: Rank of the current process.
+        fits_file_path: Path to the .fits file.
+        catalogue_path: Path to save the generated catalogue file.
+        num_cutouts: Total number of random cutouts to generate.
+        cutout_size: Size of each cutout in pixels.
+        drop_last: Whether to drop the last incomplete batch.
 
-    bottom_left = SkyCoord.from_pixel(0, 0, wcs=wcs)
-    top_right = SkyCoord.from_pixel(image_shape[1] - 1, image_shape[0] - 1, wcs=wcs)
-    ra_min, dec_min = bottom_left.ra.deg, bottom_left.dec.deg
-    ra_max, dec_max = top_right.ra.deg, top_right.dec.deg
+    Returns:
+        dataset: The dataset object.
+        data_loader: The DataLoader object.
+        dist_sampler: The DistributedSampler object.
+    """
+    # Create the dataset
+    dataset = CataDataDataset(
+        fits_file_path=fits_file_path,
+        catalogue_path=catalogue_path,
+        num_cutouts=num_cutouts,
+        cutout_size=cutout_size,
+    )
+    logger.info('CataData dataset created')
 
-logger.info(f"RA range: {ra_min} to {ra_max}")
-logger.info(f"DEC range: {dec_min} to {dec_max}")
+    # Create a distributed sampler for multi-process training
+    dist_sampler = distributed.DistributedSampler(
+        dataset=dataset,
+        num_replicas=world_size,
+        rank=rank
+    )
 
-# Step 4: Generate Random RA/DEC within the Image Bounds
-logger.info(f"Generating {num_cutouts} random RA/DEC values within the image bounds.")
-ra_values = np.random.uniform(ra_min, ra_max, num_cutouts)
-dec_values = np.random.uniform(dec_min, dec_max, num_cutouts)
+    # Create the DataLoader
+    data_loader = DataLoader(
+        dataset,
+        sampler=dist_sampler,
+        batch_size=batch_size,
+        drop_last=drop_last,
+        pin_memory=pin_mem,
+        num_workers=num_workers,
+        persistent_workers=False
+    )
+    logger.info('CataData unsupervised data loader created')
 
-# Step 5: Create the Catalogue DataFrame
-df = pd.DataFrame({
-    "RA_host": ra_values,
-    "DEC_host": dec_values,
-    "ID": np.arange(1, num_cutouts + 1)  # Unique IDs for each cutout
-})
+    return dataset, data_loader, dist_sampler
 
-# Save the Catalogue
-with open(catalogue_path, 'w') as f:
-    f.write("# RA_host DEC_host ID\n")
-    df.to_csv(f, sep=' ', index=False, header=False)
-logger.info(f"Catalogue saved to {catalogue_path}.")
 
-# Step 6: Load the Catalogue and FITS Image with CataData
-logger.info("Loading catalogue and FITS image using CataData.")
-meerklass_data = CataData(
-    catalogue_paths=[catalogue_path],
-    image_paths=[image_path],
-    field_names=['ID'],  # Optional: Use additional columns like 'ID'
-    cutout_shape=cutout_shape,
-    catalogue_kwargs={
-        'format': 'commented_header',
-        'delimiter': ' '
-    }
-)
+class CataDataDataset(Dataset):
+    """
+    PyTorch Dataset for loading random cutouts from a .fits file using CataData.
 
-# Rename columns to match CataData expectations
-if 'RA_host' in meerklass_data.df.columns and 'DEC_host' in meerklass_data.df.columns:
-    meerklass_data.df.rename(columns={"RA_host": "ra", "DEC_host": "dec"}, inplace=True)
+    Attributes:
+        fits_file_path (str): Path to the .fits file.
+        catalogue_path (str): Path to the generated catalogue file.
+        num_cutouts (int): Number of random cutouts to generate.
+        cutout_size (int): Size of each cutout in pixels.
+    """
+    def __init__(
+        self,
+        fits_file_path,
+        catalogue_path,
+        num_cutouts=10000,
+        cutout_size=224,
+    ):
+        self.fits_file_path = fits_file_path
+        self.catalogue_path = catalogue_path
+        self.num_cutouts = num_cutouts
+        self.cutout_size = cutout_size
 
-logger.info(f"Renamed columns: {meerklass_data.df.columns}")
+        # Generate the catalogue with random RA/DEC positions
+        self.generate_random_catalogue()
 
-# Step 7: Define a PyTorch Dataset Wrapper for CataData
-class CutoutDataset(torch.utils.data.Dataset):
-    def __init__(self, cata_data):
-        self.cata_data = cata_data
+        # Create CataData object
+        self.cata_data = CataData(
+            catalogue_paths=[self.catalogue_path],
+            image_paths=[self.fits_file_path],
+            field_names=['ID'],  # Specify the metadata field(s) present in the catalogue
+            cutout_shape=self.cutout_size,
+            catalogue_kwargs={
+                'delimiter': ' ',  # Explicitly set the delimiter as space
+                'format': 'ascii.comment_header'  # Explicitly set the format to match Script 2
+            }
+        )
+
+    def generate_random_catalogue(self):
+        """
+        Generates a catalogue of random RA/DEC positions within the .fits image bounds.
+        """
+        with fits.open(self.fits_file_path) as hdul:
+            wcs = WCS(hdul[0].header, naxis=2)
+            image_shape = hdul[0].data.shape[-2:]
+    
+            # Get RA/DEC bounds
+            bottom_left = SkyCoord.from_pixel(0, 0, wcs=wcs)
+            top_right = SkyCoord.from_pixel(image_shape[1]-1, image_shape[0]-1, wcs=wcs)
+            ra_min, dec_min = bottom_left.ra.deg, bottom_left.dec.deg
+            ra_max, dec_max = top_right.ra.deg, top_right.dec.deg
+
+        # Generate random RA/DEC within bounds
+        ra_values = np.random.uniform(min(ra_min, ra_max), max(ra_min, ra_max), self.num_cutouts)
+        dec_values = np.random.uniform(min(dec_min, dec_max), max(dec_min, dec_max), self.num_cutouts)
+
+        # Create DataFrame with correct column names
+        df = pd.DataFrame({
+            'ra': ra_values,  # Rename to 'ra'
+            'dec': dec_values,  # Rename to 'dec'
+            'ID': np.arange(1, self.num_cutouts + 1)
+        })
+
+        # Save the catalogue with a commented header
+        with open(self.catalogue_path, 'w') as f:
+            f.write("# ra dec ID\n")  # Write commented header with correct names
+            df.to_csv(f, sep=' ', index=False, header=False)  # Use space as delimiter
 
     def __len__(self):
         return len(self.cata_data.df)
 
     def __getitem__(self, idx):
-        cutout, metadata = self.cata_data[idx]  # Extract cutout and metadata
-        cutout = torch.tensor(cutout, dtype=torch.float32)  # Convert to tensor
-        return cutout, metadata['ID']  # Return cutout and ID
+        # Get cutout from CataData
+        cutout = self.cata_data[idx]
 
-logger.info("Dataset wrapper for PyTorch defined.")
+        # Ensure the cutout is in [3, H, W] format
 
-# Step 8: Create the DataLoader
-logger.info("Creating PyTorch DataLoader with distributed sampler.")
 
-def make_fits_cutout_dataset(
-    transform=None,
-    batch_size=batch_size,
-    collator=None,
-    pin_mem=True,
-    num_workers=num_workers,
-    world_size=1,
-    rank=0,
-    shuffle=True,
-    drop_last=True
-):
-    dataset = CutoutDataset(meerklass_data)
+        # Convert to PyTorch tensor
+        cutout_tensor = torch.tensor(cutout, dtype=torch.float32)
 
-    # Create a distributed sampler
-    sampler = distributed.DistributedSampler(
-        dataset=dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=shuffle
-    )
-
-    # Create the DataLoader
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        collate_fn=collator,
-        sampler=sampler,
-        pin_memory=pin_mem,
-        num_workers=num_workers,
-        drop_last=drop_last
-    )
-
-    return dataset, dataloader, sampler
-
-# Example Usage (for Debugging)
-if __name__ == "__main__":
-    _, dataloader, _ = make_fits_cutout_dataset()
-    for batch_idx, (images, ids) in enumerate(dataloader):
-        logger.info(f"Batch {batch_idx + 1}")
-        logger.info(f"Images shape: {images.shape}")  # Expect (batch_size, cutout_shape, cutout_shape)
-        logger.info(f"IDs: {ids}")
-        if batch_idx == 2:  # Example: Limit to first 3 batches
-            break
+        return cutout_tensor, idx
