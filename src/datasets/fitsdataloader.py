@@ -64,7 +64,7 @@ df = pd.DataFrame({
 })
 
 # Step 6: Save the Catalogue with Commented Header Format
-with open(catalogue_path, 'w') as f:
+with open(catlog_path, 'w') as f:
     f.write("# RA_host DEC_host COSMOS\n")
     df.to_csv(f, sep=' ', index=False, header=False)
 
@@ -75,14 +75,15 @@ meerklass_data = CataData(
     catalogue_paths=[catlog_path],
     image_paths=[image_path],
     field_names=['COSMOS'],
-    cutout_width=imagesize
-#    cutout_shape=224
+    cutout_shape=(imagesize,imagesize)
 )
 
 meerklass_data.df.rename(mapper={"RA_host":"ra", "DEC_host":"dec"}, axis="columns", inplace=True)
 
-print(len(meerklass_data[0]))
-meerklass_data[0][0].shape
+# Check the dataset
+print(f"Number of entries in dataset: {len(meerklass_data)}")
+first_cutout = meerklass_data[0]  # Access first cutout
+print(f"Shape of first cutout: {first_cutout[0].shape}")  # Confirm dimensions
 
 def make_cutouts(
     transform,
@@ -105,7 +106,8 @@ def make_cutouts(
         transform=transform,
         train=training,
         copy_data=copy_data,
-        index_targets=False)
+        index_targets=False
+    )
     logger.info('Fits dataset created')
     dist_sampler = torch.utils.data.distributed.DistributedSampler(
         dataset=dataset,
@@ -123,4 +125,3 @@ def make_cutouts(
     logger.info('Fits unsupervised data loader created')
 
     return dataset, data_loader, dist_sampler
-
