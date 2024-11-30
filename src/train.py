@@ -43,7 +43,7 @@ from src.utils.logging import (
 from src.utils.tensors import repeat_interleave_batch
 from src.datasets.imagenet1k import make_imagenet1k
 #####
-from srs.datasets.fitsdataloader import make_cutouts
+from src.datasets.fitsdataloader import make_cutouts
 #####
 from src.helper import (
     load_checkpoint,
