@@ -42,15 +42,14 @@ from src.utils.logging import (
     AverageMeter)
 from src.utils.tensors import repeat_interleave_batch
 from src.datasets.imagenet1k import make_imagenet1k
-
+#####
+from srs.datasets.fitsdataloader import make_cutouts
+#####
 from src.helper import (
     load_checkpoint,
     init_model,
     init_opt)
 from src.transforms import make_transforms
-
-# Import the new data loader
-from src.datasets.make_fits_cutout_dataset import make_cata2data
 
 # --
 log_timings = True
@@ -92,10 +91,6 @@ def main(args, resume_preempt=False):
     use_horizontal_flip = args['data']['use_horizontal_flip']
     use_color_distortion = args['data']['use_color_distortion']
     color_jitter = args['data']['color_jitter_strength']
-    cutout_size = args['data']['cutout_size']
-    catalogue_path = args['data']['catalogue_path']
-    num_cutouts = args['data']['num_cutouts']
-    fits_file_path = args['data']['fits_file_path']
     # --
     batch_size = args['data']['batch_size']
     pin_mem = args['data']['pin_mem']
@@ -196,19 +191,19 @@ def main(args, resume_preempt=False):
         color_jitter=color_jitter)
 
     # -- init data-loaders/samplers
-    _, unsupervised_loader, unsupervised_sampler = make_cata2data(
-        transform=transform,
-        batch_size=batch_size,
-        collator=mask_collator,
-        pin_mem=pin_mem,
-        num_workers=num_workers,
-        world_size=world_size,
-        rank=rank,
-        cutout_size=cutout_size,
-        drop_last=True,
-        catalogue_path=catalogue_path,
-        fits_file_path=fits_file_path
-    )
+    _, unsupervised_loader, unsupervised_sampler = make_cutouts(
+            transform=transform,
+            batch_size=batch_size,
+            collator=mask_collator,
+            pin_mem=pin_mem,
+            training=True,
+            num_workers=num_workers,
+            world_size=world_size,
+            rank=rank,
+            root_path=root_path,
+            image_folder=image_folder,
+            copy_data=copy_data,
+            drop_last=True)
     ipe = len(unsupervised_loader)
 
     # -- init optimizer and scheduler
@@ -384,4 +379,3 @@ def main(args, resume_preempt=False):
 
 if __name__ == "__main__":
     main()
-
