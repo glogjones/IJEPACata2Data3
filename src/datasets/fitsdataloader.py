@@ -18,7 +18,7 @@ import torchvision
 
 from cata2data import CataData
 from torch.utils.data import DataLoader
-
+from torch.utils.data.distributed import DistributedSampler
 import pandas as pd
 import numpy as np
 from astropy.io import fits
@@ -75,15 +75,19 @@ meerklass_data = CataData(
     catalogue_paths=[catlog_path],
     image_paths=[image_path],
     field_names=['COSMOS'],
-    cutout_shape=(imagesize,imagesize)
+    cutout_shape=224
 )
 
 meerklass_data.df.rename(mapper={"RA_host":"ra", "DEC_host":"dec"}, axis="columns", inplace=True)
 
 # Check the dataset
 print(f"Number of entries in dataset: {len(meerklass_data)}")
-first_cutout = meerklass_data[0]  # Access first cutout
+first_cutout = meerklass_data[0][0]  # Access first cutout
 print(f"Shape of first cutout: {first_cutout[0].shape}")  # Confirm dimensions
+
+
+
+
 
 def make_cutouts(
     transform,
@@ -100,21 +104,14 @@ def make_cutouts(
     drop_last=True,
     subset_file=None
 ):
-    dataset = meerklass_data(
-        root=root_path,
-        image_folder=image_folder,
-        transform=transform,
-        train=training,
-        copy_data=copy_data,
-        index_targets=False
-    )
+    dataset = meerklass_data
     logger.info('Fits dataset created')
-    dist_sampler = torch.utils.data.distributed.DistributedSampler(
-        dataset=dataset,
+    dist_sampler = DistributedSampler(
+        dataset=meerklass_data,
         num_replicas=world_size,
         rank=rank)
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
+    data_loader = DataLoader(
+        meerklass_data,
         collate_fn=collator,
         sampler=dist_sampler,
         batch_size=batch_size,
